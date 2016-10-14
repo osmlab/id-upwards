@@ -7,9 +7,6 @@ mapboxgl.accessToken = 'pk.eyJ1IjoidG1jdyIsImEiOiJIZmRUQjRBIn0.lRARalfaGHnPdRcc-
 var empty = {
   "version": 8,
   "name": "Empty",
-  "metadata": {
-    "mapbox:autocomposite": true
-  },
   "glyphs": "mapbox://fonts/mapbox/{fontstack}/{range}.pbf",
     "sources": {
         osm: {
@@ -19,120 +16,140 @@ var empty = {
     },
   "layers": [
     {
-      "id": "background",
-      "type": "background",
-      "paint": {
-        "background-color": "#fff"
-      }
+        'id': 'background',
+        'type': 'background',
+        'layout': {},
+        'paint': {
+            'background-color': '#333'
+        }
     },
     {
-      "id": "osm-circle",
-      "source": "osm",
-      "type": "circle",
-      "paint": {
-          'circle-color': '#000',
-          'circle-radius': 2
-      }
-    },
-    {
-      "id": "osm-line",
-      "source": "osm",
-      "type": "line",
-      "paint": {
-          'line-color': '#000',
-          'line-width': 2
-      }
-    },
-    {
-      "id": "osm-fill",
-      "source": "osm",
-      "type": "fill",
-      "paint": {
-          'fill-color': '#f0f'
-      }
+        'id': '3D Buildings',
+        'type': 'fill',
+        'source': 'osm',
+        'layout': {},
+        'paint': {
+            'fill-extrude-height': { 'stops': [[0, 0], [1000, 1000]], 'property': 'height' },
+            'fill-extrude-base': { 'stops': [[0, 0], [1000, 1000]], 'property': 'min_height' },
+            'fill-color': '#ffffff'
+        }
     }
   ]
 };
-// var all = context.intersects(map.extent()) 
 
+var Map = React.createClass({
+    componentDidMount() {
+        this.map = new mapboxgl.Map({
+            container: this.mapElement,
+            pitch: 30,
+            style: empty,
+        });
+        
+        this.map.fitBounds(this.props.bounds);
+        this.map.on('load', () => {
+            this.map.setLight({
+                'anchor': 'viewport',
+                'color': '#ff00ff',
+                'position': [1, 200, 30],
+                'intensity': 0.3
+            });
+            this.map.getSource('osm').setData(this.props.geojson);
+        });
+    },
+    componentDidUpdate() {
+        this.map.getSource('osm').setData(this.props.geojson);
+        this.map.fitBounds(this.props.bounds);
+    },
+    render: function() {
+            return <div
+                style={{height:300,width:300}}
+        ref={elem => { this.mapElement = elem; }}></div>;
+    }
+});
 
-    var App = React.createClass({
-        featuresToGeoJSON(entities) {
-            var context = this.props.context;
-            var features = [];
-            for (var id in entities) {
-                if (id[0] === 'n' && context.graph().parentWays(entities[id]).length) continue;
-                try {
-                    var gj = entities[id].asGeoJSON(context.graph());
-                    if (gj.type === 'FeatureCollection') continue;
-                    features.push({
-                        type: 'Feature',
-                        properties: {},
-                        geometry: gj
-                    });
-                } catch(e) {
-                    console.error(e);
-                }
+var App = React.createClass({
+    featuresToGeoJSON() {
+        var context = this.props.context;
+        var map = context.map();
+        var entities = context.intersects(map.extent()) 
+        var features = [];
+        for (var id in entities) {
+            try {
+                var gj = entities[id].asGeoJSON(context.graph());
+                if (gj.type !== 'Polygon') continue;
+                if (entities[id].tags.building !== 'yes') continue;
+                features.push({
+                    type: 'Feature',
+                    properties: {
+                        extrude: true,
+                        min_height: entities[id].tags.min_height ? parseFloat(entities[id].tags.min_height) : 0,
+                        height: parseFloat(entities[id].tags.height)
+                    },
+                    geometry: gj
+                });
+            } catch(e) {
+                console.error(e);
             }
-            return {
+        }
+        this.setState({
+           geojson: {
                 type: 'FeatureCollection',
                 features: features
-            };
-        },
-        getInitialState() {
-            return  {
-                active: false,
-                map: undefined,
-                features: []
-            };
-        },
-        componentDidMount: function() {
-            this.props.context.on('change.idupwards', (e) => {
-                this.setState({ geojson: this.featuresToGeoJSON(this.props.context.graph().base().entities) });
-            });
-            this.props.context.history().on('change.idupwards', (e) => {
-                this.setState({ geojson: this.featuresToGeoJSON(this.props.context.graph().base().entities) });
-            });
-        },
-        componentDidUpdate() {
-            var state = this.state;
-            if (this.state.active && this.state.geojson && this.mapElement) {
-                if (this.map && this.map.getSource('osm')) {
-                    this.map.getSource('osm').setData(this.state.geojson);
-                } else {
-                    this.map = new mapboxgl.Map({
-                        container: this.mapElement,
-                        style: empty,
-                    });
-                    this.map.fitBounds([
-                        this.props.context.map().extent()[0],
-                        this.props.context.map().extent()[1]
-                    ]);
-                    console.log(this.state.geojson);
-                    this.map.on('load', () => {
-                        this.map.getSource('osm').setData(this.state.geojson);
-                    });
-                }
-            }
-        },
-        toggle: function() {
+           }
+        });
+    },
+    getInitialState() {
+        return  {
+            active: false,
+            features: []
+        };
+    },
+    componentDidMount: function() {
+        this.setState({
+            bounds: [
+                this.props.context.map().extent()[0],
+                this.props.context.map().extent()[1]
+            ]
+        });
+        this.props.context.on('change.idupwards', (e) => {
+            this.featuresToGeoJSON();
+        });
+        this.props.context.history().on('change.idupwards', (e) => {
+            this.featuresToGeoJSON();
+        });
+        this.props.context.map().on('move.idupwards', () => {
             this.setState({
-                active: !this.state.active
+                bounds: [
+                    this.props.context.map().extent()[0],
+                    this.props.context.map().extent()[1]
+                ]
             });
-        },
-        render: function () {
-            var state = this.state;
-            return <div className='map-control'>
-                <button tabIndex='-1' style={{color:'white'}} onClick={this.toggle}>
-                    3D
-                </button>
-                {state.active ?
-                    <div className='help-wrap map-overlay fillL col5 content'>
-                        <div style={{height:500}} ref={elem => { this.mapElement = elem }}></div>
-                    </div> : null}
-                </div>;
-        }
-    });
+        });
+    },
+    toggle: function() {
+        this.setState({
+            active: !this.state.active
+        });
+    },
+    render: function () {
+        var state = this.state;
+        return <div className='map-control'>
+            {state.active ?
+                <div style={{ zIndex: -1,
+                    position: 'absolute',
+                    width: '300px',
+                    height: '300px',
+                    right: 0,
+                    bottom: 0
+                }} className='content'>
+                    <Map bounds={this.state.bounds} geojson={this.state.geojson} />
+                </div> : null}
+            <button tabIndex='-1' style={{color:'white'}} onClick={this.toggle}>
+                3D
+            </button>
+            </div>;
+    }
+});
 
 id.ui().pluginRegisterControl({
     handler: function(context) {
